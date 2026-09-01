@@ -13,6 +13,16 @@ from torchvision import transforms
 from torchvision.models import efficientnet_b3
 
 # ============================================================
+# Groq AI Agent Integration
+# ============================================================
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except Exception:
+    GROQ_AVAILABLE = False
+
+
+# ============================================================
 # Optional Grad-CAM
 # ============================================================
 try:
@@ -612,6 +622,50 @@ if uploaded_file is not None:
             mime="image/png",
             width="stretch"
         )
+
+    st.divider()
+
+    # ========================================================
+    # AI Medical Assistant (Groq Agent)
+    # ========================================================
+    st.subheader("🤖 المساعد الطبي للذكاء الاصطناعي")
+
+    if GROQ_AVAILABLE and "GROQ_API_KEY" in st.secrets:
+        try:
+            with st.spinner("جاري توليد التقرير والنصائح الطبية..."):
+                client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+                
+                system_prompt = (
+                    "You are an expert dental AI medical assistant. Provide clear, compassionate, "
+                    "and informative explanations to the user in Arabic."
+                )
+                user_prompt = (
+                    f"تم تشخيص الصورة بالحالة التالية:  {pred_class}  بنسبة ثقة {conf_score * 100:.2f}%.\n"
+                    f"يرجى كتابة تقرير طبي مبسط يشمل:\n"
+                    f"1. شرح أسباب هذه الحالة بشكل مبسط.\n"
+                    f"2. الأعراض المعتادة المرتبطة بها.\n"
+                    f"3. نصائح وإرشادات هامة للعناية والوقاية.\n"
+                    f"4. التوصية بما يجب فعله عند زيارة طبيب الأسنان."
+                )
+
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+
+                st.write(response.choices[0].message.content)
+
+        except Exception as e:
+            st.error("حدث خطأ أثناء التواصل مع Groq AI Agent.")
+            st.exception(e)
+
+    elif not GROQ_AVAILABLE:
+        st.info("مكتبة groq غير مثبتة في النظام.")
+    else:
+        st.info("لم يتم إعداد GROQ_API_KEY في Streamlit Secrets.")
 
     st.divider()
 
