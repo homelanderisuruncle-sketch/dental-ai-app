@@ -1,263 +1,74 @@
 import os
-from pathlib import Path
+import io
+import warnings
 
+import gdown
+import numpy as np
 import streamlit as st
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
 from PIL import Image
-from torchvision import transforms, models
+from torchvision import transforms
+from torchvision.models import efficientnet_b3
 
-# =========================================================
-# Groq - اختياري
-# =========================================================
+# ============================================================
+# Optional Grad-CAM
+# ============================================================
 try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
+    from pytorch_grad_cam import GradCAM
+    from pytorch_grad_cam.utils.image import show_cam_on_image
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
-# =========================================================
-# gdown - لتحميل النموذج من Google Drive
-# =========================================================
-try:
-    import gdown
-    GDOWN_AVAILABLE = True
-except ImportError:
-    GDOWN_AVAILABLE = False
+    GRADCAM_AVAILABLE = True
+except Exception:
+    GRADCAM_AVAILABLE = False
 
 
-# =========================================================
-# إعداد الصفحة
-# =========================================================
-
+# ============================================================
+# Page Configuration
+# ============================================================
 st.set_page_config(
-    page_title="Dental AI Assistant",
+    page_title="Dental AI",
     page_icon="🦷",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
-# =========================================================
-# CSS
-# =========================================================
-
-st.markdown(
-    """
-    <style>
-
-    .stApp {
-        background:
-            radial-gradient(
-                circle at top right,
-                rgba(37, 99, 235, 0.10),
-                transparent 30%
-            ),
-            radial-gradient(
-                circle at bottom left,
-                rgba(14, 165, 233, 0.08),
-                transparent 30%
-            ),
-            #f8fafc;
-    }
-
-    #MainMenu {
-        visibility: hidden;
-    }
-
-    footer {
-        visibility: hidden;
-    }
-
-    header {
-        visibility: hidden;
-    }
-
-    .block-container {
-        max-width: 1200px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
-
-    .hero {
-        background: linear-gradient(
-            135deg,
-            #0f172a 0%,
-            #1e3a8a 55%,
-            #2563eb 100%
-        );
-        padding: 42px;
-        border-radius: 28px;
-        color: white;
-        margin-bottom: 30px;
-        box-shadow:
-            0 20px 50px rgba(15, 23, 42, 0.18);
-    }
-
-    .hero-title {
-        font-size: 46px;
-        font-weight: 800;
-        margin-bottom: 8px;
-        letter-spacing: -1px;
-    }
-
-    .hero-subtitle {
-        font-size: 18px;
-        color: #dbeafe;
-        line-height: 1.8;
-        max-width: 800px;
-    }
-
-    .badge {
-        display: inline-block;
-        padding: 7px 14px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.14);
-        color: #e0f2fe;
-        font-size: 13px;
-        margin-bottom: 18px;
-        border: 1px solid rgba(255,255,255,0.18);
-    }
-
-    .card {
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 22px;
-        padding: 24px;
-        box-shadow:
-            0 10px 30px rgba(15, 23, 42, 0.06);
-        margin-bottom: 20px;
-    }
-
-    .card-title {
-        font-size: 21px;
-        font-weight: 750;
-        color: #0f172a;
-        margin-bottom: 8px;
-    }
-
-    .card-description {
-        color: #64748b;
-        line-height: 1.7;
-        font-size: 14px;
-    }
-
-    .diagnosis-card {
-        background:
-            linear-gradient(
-                135deg,
-                #eff6ff,
-                #f8fafc
-            );
-        border: 1px solid #bfdbfe;
-        border-radius: 22px;
-        padding: 28px;
-        margin-top: 20px;
-    }
-
-    .diagnosis-label {
-        color: #64748b;
-        font-size: 14px;
-        margin-bottom: 6px;
-    }
-
-    .diagnosis-name {
-        font-size: 34px;
-        font-weight: 800;
-        color: #1d4ed8;
-        margin-bottom: 12px;
-    }
-
-    .confidence-box {
-        background: white;
-        border-radius: 16px;
-        padding: 16px;
-        border: 1px solid #e2e8f0;
-        margin-top: 15px;
-    }
-
-    .medical-warning {
-        background: #fff7ed;
-        border: 1px solid #fed7aa;
-        color: #9a3412;
-        padding: 16px 18px;
-        border-radius: 16px;
-        line-height: 1.8;
-        margin-top: 20px;
-    }
-
-    .success-box {
-        background: #f0fdf4;
-        border: 1px solid #bbf7d0;
-        color: #166534;
-        padding: 16px 18px;
-        border-radius: 16px;
-        line-height: 1.8;
-    }
-
-    .footer {
-        text-align: center;
-        color: #94a3b8;
-        padding-top: 30px;
-        font-size: 13px;
-    }
-
-    [data-testid="stFileUploader"] {
-        background: white;
-        border-radius: 18px;
-        padding: 8px;
-    }
-
-    .stButton > button {
-        width: 100%;
-        border-radius: 14px;
-        height: 48px;
-        font-weight: 700;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# =========================================================
-# إعداد النموذج
-# =========================================================
-
+# ============================================================
+# Class Names
+# ============================================================
 CLASS_NAMES = [
-    "CaS",
-    "CoS",
-    "Gum",
-    "MC",
-    "OC",
-    "OLP",
+    "Calculus",
+    "Caries",
+    "Gingivitis",
+    "Hypodontia",
+    "Tooth Discoloration",
+    "Ulcer",
 ]
 
-CLASS_NAMES_AR = {
-    "CaS": "CaS",
-    "CoS": "CoS",
-    "Gum": "مشاكل اللثة",
-    "MC": "MC",
-    "OC": "OC",
-    "OLP": "OLP",
-}
+
+# ============================================================
+# Google Drive Model
+# ============================================================
+MODEL_PATH = "best_model.pth"
+
+FILE_ID = "10bc8mAmX1rp1nlFqWujwL3jqC_mGw6mM"
+
+MODEL_URL = f"https://drive.google.com/uc?id={FILE_ID}"
 
 
+# ============================================================
+# Custom EfficientNet-B3
+# ============================================================
 class CustomEfficientNet(nn.Module):
-
     def __init__(self, num_classes=6):
-
         super().__init__()
 
-        self.model = models.efficientnet_b3(
-            weights=None
-        )
+        self.model = efficientnet_b3(weights=None)
 
-        in_features = (
-            self.model.classifier[1].in_features
-        )
+        in_features = self.model.classifier[1].in_features
 
         self.model.classifier[1] = nn.Linear(
             in_features,
@@ -265,179 +76,90 @@ class CustomEfficientNet(nn.Module):
         )
 
     def forward(self, x):
-
         return self.model(x)
 
 
-# =========================================================
-# معلومات Google Drive
-# =========================================================
-
-MODEL_PATH = Path("best_model.pth")
-
-GOOGLE_DRIVE_FILE_ID = (
-    "10bc8mAmX1rp1nlFqWujwL3jqC_mGw6mM"
-)
-
-
-# =========================================================
-# تحميل النموذج
-# =========================================================
-
-@st.cache_resource(show_spinner=False)
-def load_model():
-
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
-
-    # -----------------------------------------------------
-    # تحميل النموذج من Google Drive
-    # -----------------------------------------------------
-
-    if not MODEL_PATH.exists():
-
-        if not GDOWN_AVAILABLE:
-
-            return (
-                None,
-                device,
-                "مكتبة gdown غير مثبتة."
-            )
-
-        try:
-
-            url = (
-                "https://drive.google.com/uc?id="
-                + GOOGLE_DRIVE_FILE_ID
-            )
-
-            downloaded_file = gdown.download(
-                url=url,
-                output=str(MODEL_PATH),
-                quiet=False,
-                fuzzy=True
-            )
-
-            if (
-                downloaded_file is None
-                or not MODEL_PATH.exists()
-            ):
-
-                return (
-                    None,
-                    device,
-                    "فشل تحميل النموذج من Google Drive."
-                )
-
-        except Exception as e:
-
-            return (
-                None,
-                device,
-                f"خطأ أثناء تحميل النموذج: {e}"
-            )
-
-    # -----------------------------------------------------
-    # التحقق من حجم الملف
-    # -----------------------------------------------------
+# ============================================================
+# Download Model
+# ============================================================
+def download_model():
+    if os.path.exists(MODEL_PATH):
+        return True
 
     try:
+        with st.spinner("جاري تحميل نموذج الذكاء الاصطناعي..."):
 
-        file_size = MODEL_PATH.stat().st_size
-
-        if file_size < 1024:
-
-            return (
-                None,
-                device,
-                "ملف النموذج الذي تم تحميله غير صالح."
+            downloaded = gdown.download(
+                MODEL_URL,
+                MODEL_PATH,
+                quiet=False
             )
+
+        if downloaded and os.path.exists(MODEL_PATH):
+            return True
+
+        return False
 
     except Exception as e:
+        st.error("فشل تحميل النموذج من Google Drive.")
+        st.exception(e)
+        return False
 
-        return (
-            None,
-            device,
-            f"تعذر التحقق من ملف النموذج: {e}"
-        )
 
-    # -----------------------------------------------------
-    # إنشاء النموذج
-    # -----------------------------------------------------
+# ============================================================
+# Load Model
+# ============================================================
+@st.cache_resource
+def load_model():
+
+    if not download_model():
+        return None, None
+
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+    model = CustomEfficientNet(
+        num_classes=len(CLASS_NAMES)
+    )
 
     try:
 
-        model = CustomEfficientNet(
-            num_classes=len(CLASS_NAMES)
+        checkpoint = torch.load(
+            MODEL_PATH,
+            map_location=device
         )
 
-        # -------------------------------------------------
-        # تحميل الـ weights
-        # -------------------------------------------------
-
-        try:
-
-            checkpoint = torch.load(
-                str(MODEL_PATH),
-                map_location=device,
-                weights_only=True
-            )
-
-        except TypeError:
-
-            checkpoint = torch.load(
-                str(MODEL_PATH),
-                map_location=device
-            )
-
-        # -------------------------------------------------
-        # التعامل مع أنواع Checkpoint المختلفة
-        # -------------------------------------------------
-
+        # ----------------------------------------------------
+        # Handle different checkpoint formats
+        # ----------------------------------------------------
         if isinstance(checkpoint, dict):
 
             if "state_dict" in checkpoint:
-
                 state_dict = checkpoint["state_dict"]
 
             elif "model_state_dict" in checkpoint:
-
-                state_dict = checkpoint[
-                    "model_state_dict"
-                ]
+                state_dict = checkpoint["model_state_dict"]
 
             else:
-
                 state_dict = checkpoint
 
         else:
+            state_dict = checkpoint
 
-            return (
-                None,
-                device,
-                "صيغة ملف best_model.pth غير مدعومة."
-            )
-
-        # -------------------------------------------------
-        # إزالة module.
-        # -------------------------------------------------
-
+        # ----------------------------------------------------
+        # Remove "module." if model was trained with DataParallel
+        # ----------------------------------------------------
         cleaned_state_dict = {}
 
         for key, value in state_dict.items():
 
             if key.startswith("module."):
+                new_key = key[len("module."):]
+            else:
+                new_key = key
 
-                key = key[7:]
-
-            cleaned_state_dict[key] = value
-
-        # -------------------------------------------------
-        # تحميل الأوزان
-        # -------------------------------------------------
+            cleaned_state_dict[new_key] = value
 
         model.load_state_dict(
             cleaned_state_dict,
@@ -447,572 +169,489 @@ def load_model():
         model.to(device)
         model.eval()
 
-        return model, device, None
+        return model, device
+
+    except RuntimeError as e:
+
+        st.error(
+            "حدث خطأ أثناء تحميل أوزان النموذج."
+        )
+
+        st.error(
+            "تأكد أن best_model.pth هو نموذج EfficientNet-B3 "
+            "المدرب على نفس الـ 6 classes."
+        )
+
+        st.exception(e)
+
+        return None, None
 
     except Exception as e:
 
-        return (
-            None,
-            device,
-            f"حدث خطأ أثناء تجهيز النموذج: {e}"
-        )
+        st.error("تعذر تحميل النموذج.")
+        st.exception(e)
+
+        return None, None
 
 
-# =========================================================
-# تجهيز النموذج
-# =========================================================
-
-with st.spinner(
-    "⏳ جاري تجهيز نموذج الذكاء الاصطناعي..."
-):
-
-    model, device, model_error = load_model()
-
-
-# =========================================================
-# تحويل الصور
-# =========================================================
-
-transform = transforms.Compose([
-
-    transforms.Resize(
-        (224, 224)
-    ),
-
+# ============================================================
+# Image Preprocessing
+# ============================================================
+preprocess = transforms.Compose([
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-
     transforms.Normalize(
-        mean=[
-            0.485,
-            0.456,
-            0.406
-        ],
-        std=[
-            0.229,
-            0.224,
-            0.225
-        ]
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
     ),
 ])
 
 
-# =========================================================
+# ============================================================
+# Prediction
+# ============================================================
+def predict_image(model, device, image):
+
+    input_tensor = preprocess(image).unsqueeze(0)
+
+    input_tensor = input_tensor.to(device)
+
+    with torch.inference_mode():
+
+        outputs = model(input_tensor)
+
+        probabilities = torch.softmax(
+            outputs,
+            dim=1
+        )
+
+        confidence, predicted = torch.max(
+            probabilities,
+            dim=1
+        )
+
+    pred_idx = int(predicted.item())
+
+    pred_class = CLASS_NAMES[pred_idx]
+
+    conf_score = float(confidence.item())
+
+    all_probabilities = probabilities[0].detach().cpu().numpy()
+
+    return (
+        pred_idx,
+        pred_class,
+        conf_score,
+        all_probabilities,
+        input_tensor,
+    )
+
+
+# ============================================================
+# Grad-CAM
+# ============================================================
+def generate_gradcam(
+    model,
+    input_tensor,
+    pred_idx,
+    original_image
+):
+
+    if not GRADCAM_AVAILABLE:
+        return None
+
+    try:
+
+        # ----------------------------------------------------
+        # EfficientNet-B3 final convolutional feature layer
+        # ----------------------------------------------------
+        target_layers = [
+            model.model.features[-1]
+        ]
+
+        # ----------------------------------------------------
+        # Create GradCAM
+        #
+        # Newer pytorch-grad-cam versions:
+        # GradCAM(model=..., target_layers=...)
+        # ----------------------------------------------------
+        try:
+
+            cam = GradCAM(
+                model=model,
+                target_layers=target_layers
+            )
+
+        except TypeError:
+
+            # Compatibility fallback
+            cam = GradCAM(
+                model,
+                target_layers
+            )
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # targets MUST be passed to cam(...)
+        # ----------------------------------------------------
+        targets = [
+            ClassifierOutputTarget(pred_idx)
+        ]
+
+        grayscale_cam = cam(
+            input_tensor=input_tensor,
+            targets=targets
+        )[0]
+
+        # ----------------------------------------------------
+        # Convert original image to 224x224
+        # ----------------------------------------------------
+        resized_image = original_image.resize(
+            (224, 224)
+        ).convert("RGB")
+
+        rgb_image = np.asarray(
+            resized_image
+        ).astype(np.float32) / 255.0
+
+        # ----------------------------------------------------
+        # Create Grad-CAM overlay
+        # ----------------------------------------------------
+        visualization = show_cam_on_image(
+            rgb_image,
+            grayscale_cam,
+            use_rgb=True
+        )
+
+        # ----------------------------------------------------
+        # Cleanup
+        # ----------------------------------------------------
+        try:
+            cam.activations_and_grads.release()
+        except Exception:
+            pass
+
+        return Image.fromarray(visualization)
+
+    except Exception as e:
+
+        st.warning(
+            "تعذر إنشاء Grad-CAM لهذه الصورة."
+        )
+
+        return None
+
+
+# ============================================================
+# Confidence Label
+# ============================================================
+def confidence_level(confidence):
+
+    if confidence >= 0.90:
+        return "Very High"
+
+    if confidence >= 0.75:
+        return "High"
+
+    if confidence >= 0.50:
+        return "Moderate"
+
+    return "Low"
+
+
+# ============================================================
 # Header
-# =========================================================
+# ============================================================
+st.title("🦷 Dental AI")
 
-st.markdown(
-    """
-    <div class="hero" dir="rtl">
-
-        <div class="badge">
-            🦷 AI • Dental Image Analysis
-        </div>
-
-        <div class="hero-title">
-            مساعد الأسنان الذكي
-        </div>
-
-        <div class="hero-subtitle">
-            ارفع صورة للأسنان واحصل على تحليل
-            بواسطة نموذج ذكاء اصطناعي مبني على
-            EfficientNet-B3، مع عرض نسبة الثقة
-            والاحتمالات الأعلى وتوضيح ذكي للنتيجة.
-        </div>
-
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.write(
+    "نظام ذكاء اصطناعي لتحليل صور الأسنان "
+    "وتصنيف الحالة المحتملة."
 )
 
+st.divider()
 
-# =========================================================
+
+# ============================================================
 # Sidebar
-# =========================================================
-
+# ============================================================
 with st.sidebar:
 
-    st.markdown(
-        "# 🦷 Dental AI"
+    st.header("🦷 Dental AI")
+
+    st.write(
+        "EfficientNet-B3"
     )
 
-    st.markdown(
-        """
-        أداة مساعدة لتحليل صور الأسنان
-        باستخدام الذكاء الاصطناعي.
-        """
+    st.write(
+        f"عدد الفئات: **{len(CLASS_NAMES)}**"
     )
 
     st.divider()
 
-    st.markdown(
-        "### 📋 الحالات المدعومة"
+    st.subheader("الفئات")
+
+    for i, class_name in enumerate(CLASS_NAMES, start=1):
+
+        st.write(
+            f"{i}. {class_name}"
+        )
+
+    st.divider()
+
+    device_text = (
+        "GPU (CUDA)"
+        if torch.cuda.is_available()
+        else "CPU"
     )
-
-    for class_name in CLASS_NAMES:
-
-        st.markdown(
-            f"• **{CLASS_NAMES_AR[class_name]}**"
-        )
-
-    st.divider()
-
-    if device.type == "cuda":
-
-        st.success(
-            "⚡ GPU مفعل"
-        )
-
-    else:
-
-        st.info(
-            "💻 يعمل على CPU"
-        )
-
-    st.divider()
 
     st.caption(
-        "النتائج تقديرية ولأغراض تعليمية "
-        "ولا تغني عن طبيب الأسنان."
+        f"Device: {device_text}"
     )
 
 
-# =========================================================
-# خطأ النموذج
-# =========================================================
+# ============================================================
+# Load Model
+# ============================================================
+model, device = load_model()
 
-if model_error:
+
+if model is None:
 
     st.error(
-        "⚠️ لم يتم تشغيل نموذج الذكاء الاصطناعي"
-    )
-
-    st.markdown(
-        f"""
-        <div class="card" dir="rtl">
-
-            <div class="card-title">
-                حدثت مشكلة أثناء تجهيز النموذج
-            </div>
-
-            <div class="card-description">
-                {model_error}
-            </div>
-
-        </div>
-        """,
-        unsafe_allow_html=True,
+        "النموذج غير متاح. "
+        "تحقق من ملف best_model.pth وGoogle Drive."
     )
 
     st.stop()
 
 
-# =========================================================
-# رفع الصورة
-# =========================================================
-
-col1, col2 = st.columns(
-    [1, 1],
-    gap="large"
+# ============================================================
+# File Upload
+# ============================================================
+uploaded_file = st.file_uploader(
+    "📷 ارفع صورة الأسنان",
+    type=[
+        "jpg",
+        "jpeg",
+        "png",
+        "webp"
+    ],
+    help="ارفع صورة واضحة للأسنان للحصول على أفضل نتيجة."
 )
 
 
-with col1:
-
-    st.markdown(
-        """
-        <div class="card" dir="rtl">
-
-            <div class="card-title">
-                📤 ارفع صورة الأسنان
-            </div>
-
-            <div class="card-description">
-                اختر صورة واضحة للأسنان بصيغة
-                JPG أو JPEG أو PNG.
-                <br><br>
-                للحصول على نتيجة أفضل استخدم صورة
-                واضحة وبإضاءة جيدة.
-            </div>
-
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    uploaded_file = st.file_uploader(
-        "اختيار الصورة",
-        type=[
-            "jpg",
-            "jpeg",
-            "png"
-        ],
-        label_visibility="collapsed"
-    )
-
-
-# =========================================================
-# إذا تم رفع صورة
-# =========================================================
-
+# ============================================================
+# Main Application
+# ============================================================
 if uploaded_file is not None:
 
     try:
 
+        image_bytes = uploaded_file.getvalue()
+
         image = Image.open(
-            uploaded_file
+            io.BytesIO(image_bytes)
         ).convert("RGB")
 
     except Exception:
 
         st.error(
-            "❌ الملف المرفوع ليس صورة صالحة."
+            "الملف المرفوع ليس صورة صالحة."
         )
 
         st.stop()
 
-    with col2:
+    st.divider()
 
-        st.markdown(
-            """
-            <div class="card" dir="rtl">
+    # ========================================================
+    # Image Preview
+    # ========================================================
+    col1, col2 = st.columns(
+        2,
+        gap="large"
+    )
 
-                <div class="card-title">
-                    🖼️ معاينة الصورة
-                </div>
+    with col1:
 
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.subheader("📷 الصورة الأصلية")
 
         st.image(
             image,
-            use_container_width=True
+            width="stretch"
         )
 
-    st.markdown("")
+    # ========================================================
+    # Prediction
+    # ========================================================
+    with st.spinner("جاري تحليل الصورة..."):
 
-    analyze = st.button(
-        "🔍 تحليل الصورة الآن",
-        type="primary",
-        use_container_width=True
-    )
+        (
+            pred_idx,
+            pred_class,
+            conf_score,
+            all_probabilities,
+            input_tensor,
+        ) = predict_image(
+            model,
+            device,
+            image
+        )
 
-    # =====================================================
-    # التحليل
-    # =====================================================
+    with col2:
 
-    if analyze:
+        st.subheader("🔍 النتيجة")
+
+        st.metric(
+            "التصنيف المتوقع",
+            pred_class
+        )
+
+        st.metric(
+            "Confidence",
+            f"{conf_score * 100:.2f}%"
+        )
+
+        st.write(
+            f"مستوى الثقة: **{confidence_level(conf_score)}**"
+        )
+
+        st.progress(
+            min(max(conf_score, 0.0), 1.0)
+        )
+
+    st.divider()
+
+    # ========================================================
+    # Class Probabilities
+    # ========================================================
+    st.subheader("📊 احتمالات جميع الفئات")
+
+    probability_columns = st.columns(3)
+
+    for i, class_name in enumerate(CLASS_NAMES):
+
+        probability = float(
+            all_probabilities[i]
+        )
+
+        with probability_columns[i % 3]:
+
+            st.metric(
+                class_name,
+                f"{probability * 100:.2f}%"
+            )
+
+            st.progress(
+                min(max(probability, 0.0), 1.0)
+            )
+
+    st.divider()
+
+    # ========================================================
+    # Grad-CAM
+    # ========================================================
+    st.subheader("🔥 Grad-CAM")
+
+    if GRADCAM_AVAILABLE:
 
         with st.spinner(
-            "🔬 جاري تحليل الصورة..."
+            "جاري إنشاء خريطة Grad-CAM..."
         ):
 
-            try:
-
-                input_tensor = (
-                    transform(image)
-                    .unsqueeze(0)
-                    .to(device)
-                )
-
-                with torch.inference_mode():
-
-                    outputs = model(
-                        input_tensor
-                    )
-
-                    probabilities = F.softmax(
-                        outputs,
-                        dim=1
-                    )[0]
-
-                    confidence, predicted = torch.max(
-                        probabilities,
-                        dim=0
-                    )
-
-                predicted_index = (
-                    predicted.item()
-                )
-
-                pred_class = CLASS_NAMES[
-                    predicted_index
-                ]
-
-                confidence_score = (
-                    confidence.item() * 100
-                )
-
-                # =================================================
-                # النتيجة
-                # =================================================
-
-                st.markdown(
-                    f"""
-                    <div class="diagnosis-card"
-                         dir="rtl">
-
-                        <div class="diagnosis-label">
-                            النتيجة المتوقعة
-                        </div>
+            cam_image = generate_gradcam(
+                model=model,
+                input_tensor=input_tensor,
+                pred_idx=pred_idx,
+                original_image=image
+            )
 
-                        <div class="diagnosis-name">
-                            🦷 {CLASS_NAMES_AR[pred_class]}
-                        </div>
+        if cam_image is not None:
 
-                        <div class="confidence-box">
+            st.image(
+                cam_image,
+                caption=(
+                    f"Grad-CAM — {pred_class}"
+                ),
+                width="stretch"
+            )
 
-                            <div class="diagnosis-label">
-                                ثقة النموذج
-                            </div>
+            st.caption(
+                "توضح الخريطة المناطق التي ساهمت "
+                "أكثر في قرار النموذج."
+            )
 
-                            <strong>
-                                {confidence_score:.2f}%
-                            </strong>
+    else:
 
-                        </div>
+        st.info(
+            "Grad-CAM غير متاح. "
+            "ثبّت مكتبة grad-cam من requirements.txt."
+        )
 
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    st.divider()
 
-                st.progress(
-                    min(
-                        max(
-                            confidence.item(),
-                            0.0
-                        ),
-                        1.0
-                    )
-                )
+    # ========================================================
+    # Download Grad-CAM
+    # ========================================================
+    if (
+        GRADCAM_AVAILABLE
+        and cam_image is not None
+    ):
 
-                # =================================================
-                # أعلى 3 احتمالات
-                # =================================================
+        buffer = io.BytesIO()
 
-                st.markdown(
-                    "### 📊 أعلى الاحتمالات"
-                )
+        cam_image.save(
+            buffer,
+            format="PNG"
+        )
 
-                top_k = min(
-                    3,
-                    len(CLASS_NAMES)
-                )
+        st.download_button(
+            label="⬇️ تحميل Grad-CAM",
+            data=buffer.getvalue(),
+            file_name="dental_gradcam.png",
+            mime="image/png",
+            width="stretch"
+        )
 
-                top_values, top_indices = (
-                    torch.topk(
-                        probabilities,
-                        top_k
-                    )
-                )
-
-                for value, index in zip(
-                    top_values,
-                    top_indices
-                ):
+    st.divider()
 
-                    class_name = CLASS_NAMES[
-                        index.item()
-                    ]
+    # ========================================================
+    # Medical Disclaimer
+    # ========================================================
+    st.warning(
+        "⚠️ هذه النتيجة هي مساعدة آلية وليست تشخيصًا "
+        "طبيًا نهائيًا. يجب تأكيد الحالة بواسطة طبيب أسنان مختص."
+    )
 
-                    percentage = (
-                        value.item() * 100
-                    )
-
-                    c1, c2 = st.columns(
-                        [4, 1]
-                    )
-
-                    with c1:
-
-                        st.markdown(
-                            f"**{CLASS_NAMES_AR[class_name]}**"
-                        )
-
-                    with c2:
-
-                        st.markdown(
-                            f"**{percentage:.1f}%**"
-                        )
 
-                    st.progress(
-                        value.item()
-                    )
-
-                # =================================================
-                # Groq
-                # =================================================
-
-                st.markdown(
-                    "### 🤖 التوضيح الذكي"
-                )
-
-                groq_key = None
-
-                try:
+# ============================================================
+# No Image
+# ============================================================
+else:
 
-                    if "GROQ_API_KEY" in st.secrets:
-
-                        groq_key = st.secrets[
-                            "GROQ_API_KEY"
-                        ]
-
-                except Exception:
-
-                    groq_key = None
-
-                if (
-                    GROQ_AVAILABLE
-                    and groq_key
-                ):
-
-                    try:
-
-                        client = Groq(
-                            api_key=groq_key
-                        )
-
-                        prompt = f"""
-أنت مساعد تثقيفي متخصص في صحة الفم والأسنان.
-
-قام نموذج ذكاء اصطناعي بتحليل صورة وكانت
-النتيجة المتوقعة:
-
-الحالة: {pred_class}
-نسبة ثقة النموذج: {confidence_score:.1f}%
-
-اشرح للمستخدم باللغة العربية بشكل واضح ومختصر:
-
-- ما معنى النتيجة؟
-- ما الأعراض الشائعة المرتبطة بها؟
-- ما النصائح العامة للعناية بصحة الفم؟
-- متى ينبغي مراجعة طبيب الأسنان؟
-
-مهم:
-لا تعتبر النتيجة تشخيصًا طبيًا نهائيًا.
-لا تصف أدوية أو جرعات.
-وضح أن النتيجة ناتجة عن نموذج ذكاء اصطناعي.
-"""
+    st.info(
+        "👆 ارفع صورة أسنان من الأعلى للبدء."
+    )
 
-                        response = (
-                            client
-                            .chat
-                            .completions
-                            .create(
-                                model=(
-                                    "llama-3.3-70b-versatile"
-                                ),
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": prompt
-                                    }
-                                ],
-                                temperature=0.3,
-                                max_tokens=800
-                            )
-                        )
+    st.subheader("الفئات التي يستطيع النموذج تصنيفها")
 
-                        answer = (
-                            response
-                            .choices[0]
-                            .message
-                            .content
-                        )
+    cols = st.columns(3)
 
-                        st.markdown(
-                            f"""
-                            <div class="card"
-                                 dir="rtl">
+    for i, class_name in enumerate(CLASS_NAMES):
 
-                                {answer}
+        with cols[i % 3]:
 
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+            st.info(
+                f"**{class_name}**"
+            )
 
-                    except Exception as e:
 
-                        st.warning(
-                            "⚠️ تعذر تشغيل الاستشارة "
-                            "الذكية حاليًا، لكن نتيجة "
-                            "النموذج متاحة."
-                        )
-
-                        with st.expander(
-                            "تفاصيل الخطأ"
-                        ):
-
-                            st.code(
-                                str(e)
-                            )
-
-                else:
-
-                    st.info(
-                        "💡 الاستشارة الذكية غير مفعلة. "
-                        "أضف GROQ_API_KEY إلى Secrets "
-                        "لتفعيلها."
-                    )
-
-                # =================================================
-                # تحذير طبي
-                # =================================================
-
-                st.markdown(
-                    """
-                    <div class="medical-warning"
-                         dir="rtl">
-
-                        ⚠️ <b>تنبيه مهم:</b><br>
-
-                        هذه النتيجة تقديرية من نموذج
-                        ذكاء اصطناعي وليست تشخيصًا طبيًا
-                        نهائيًا. يجب مراجعة طبيب الأسنان
-                        للحصول على تشخيص دقيق.
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-            except Exception as e:
-
-                st.error(
-                    "❌ حدث خطأ أثناء تحليل الصورة."
-                )
-
-                with st.expander(
-                    "تفاصيل الخطأ"
-                ):
-
-                    st.code(
-                        str(e)
-                    )
-
-
-# =========================================================
+# ============================================================
 # Footer
-# =========================================================
+# ============================================================
+st.divider()
 
-st.markdown(
-    """
-    <div class="footer" dir="rtl">
-
-        🦷 Dental AI Assistant
-
-        <br>
-
-        AI-powered dental image analysis
-
-        <br>
-
-        For educational purposes only
-
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.caption(
+    "Dental AI • EfficientNet-B3 • "
+    "AI-assisted dental image classification"
 )
