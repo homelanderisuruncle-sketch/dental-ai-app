@@ -79,7 +79,7 @@ client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 # --- الواجهة والتفاعل ---
 col1, col2 = st.columns([1, 1])
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 with col1:
     st.subheader("1. رفع صورة الأسنان")
     uploaded_file = st.file_uploader("اختر صورة للتشخيص...", type=["jpg", "jpeg", "png"])
