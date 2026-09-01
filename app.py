@@ -28,31 +28,40 @@ st.set_page_config(page_title="Dental AI Assistant", layout="wide")
 st.title("🦷 نظام التشخيص الطبي للأسنان والمساعد الذكي")
 
 # 2. تعريف نموذج EfficientNet-B3
+import torch.nn as nn
+from torchvision.models import efficientnet_b3, EfficientNet_B3_Weights
+
 class CustomEfficientNet(nn.Module):
-    def init(self, num_classes):
-        super(CustomEfficientNet, self).init()
+    def __init__(self, num_classes):
+        super(CustomEfficientNet, self).__init__()
+        # تحميل النموذج الأساسي
         self.model = efficientnet_b3(weights=None)
-        self.model.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(self.model.classifier[1].in_features, num_classes)
-        )
-    
+        # تعديل الطبقة الأخيرة لتتناسب مع عدد الفئات لديك
+        in_features = self.model.classifier[1].in_features
+        self.model.classifier[1] = nn.Linear(in_features, num_classes)
+
     def forward(self, x):
         return self.model(x)
 
 @st.cache_resource
 def load_model():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    class_names = ['Calculus', 'Caries', 'Gingivitis', 'Hypodontia', 'Tooth Discoloration', 'Ulcer']
+    class_names = ['class1', 'class2', 'class3']  # ضع أسماء الفئات الخاصة بك هنا
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # تنزيل النموذج عبر gdown إذا لم يكن موجوداً
+    model_path = "best_model.pth"
+    if not os.path.exists(model_path):
+        file_id = "10bc8mAmX1rp1nlFqWujwL3jqC_mGw6mM"
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, model_path, quiet=False)
+
+    # إنشاء النموذج وتمرير عدد الفئات
     model = CustomEfficientNet(num_classes=len(class_names))
-    model_path = 'best_model.pth'
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
+    
     return model, device, class_names
-
-model, device, class_names = load_model()
 
 # تحويلات الصور
 transform = transforms.Compose([
