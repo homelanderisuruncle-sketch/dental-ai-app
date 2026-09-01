@@ -64,10 +64,13 @@ def load_model():
     return model, device, class_names
 
 # تحويلات الصور
+from torchvision import transforms
+from PIL import Image
+# تعريف التحويلات المطلوبة للنموذج
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize((224, 224)), # أو الحجم الذي قمت بتدريب EfficientNet عليه مثل (300, 300)
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 # 3. إعداد Groq AI Agent
