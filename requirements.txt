@@ -1,0 +1,8 @@
+torch
+torchvision
+pillow
+numpy
+pytorch-grad-cam
+groq
+streamlit
+gdown
