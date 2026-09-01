@@ -84,19 +84,35 @@ with col1:
     st.subheader("1. رفع صورة الأسنان")
     uploaded_file = st.file_uploader("اختر صورة للتشخيص...", type=["jpg", "jpeg", "png"])
     
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert('RGB')
-        input_tensor = transform(image).unsqueeze(0).to(device)
-        
-        # التنبؤ
-        with torch.no_grad():
-            outputs = model(input_tensor)
-            probs = torch.nn.functional.softmax(outputs, dim=1)
-            confidence, predicted = torch.max(probs, 1)
-            
-        pred_idx = predicted.item()
-        pred_class = class_names[pred_idx]
-        conf_score = confidence.item() * 100
+import torch
+import streamlit as st
+from PIL import Image
+from torchvision import transforms
+
+# 1. استدعاء النموذج والدالة المعرفة مسبقاً
+model, device, class_names = load_model()
+
+# 2. تعريف التحويلات
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+# 3. واجهة رفع الصورة والتنبؤ
+uploaded_file = st.file_uploader("اختر صورة للتشخيص", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert('RGB')
+    st.image(image, caption="الصورة المرفوعة", use_column_width=True)
+    
+    input_tensor = transform(image).unsqueeze(0).to(device)
+    
+    # التنبؤ
+    with torch.no_grad():
+        outputs = model(input_tensor)
+        probs = torch.nn.functional.softmax(outputs, dim=1)
+        confidence, predicted = torch.max(probs, 1)
         
         # Grad-CAM
         target_layer = [model.model.features[-1]]
