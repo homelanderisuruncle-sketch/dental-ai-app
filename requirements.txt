@@ -2,7 +2,7 @@ torch
 torchvision
 pillow
 numpy
-pytorch-grad-cam
+grad-cam
 groq
 streamlit
 gdown
